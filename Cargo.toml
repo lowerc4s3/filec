@@ -10,5 +10,6 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.38", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive", "env"] }
+directories = "6.0.0"
 fs4 = { version = "0.13.1", features = ["sync"] }
