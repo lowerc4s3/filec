@@ -9,9 +9,9 @@ pub(crate) struct Cli {
     #[arg(short, long)]
     pub(crate) verbose: bool,
 
-    /// Provide buffer file
-    #[arg(long, env = "FILEC_BUFFER_PATH")]
-    pub(crate) buffer_path: Option<PathBuf>,
+    /// Provide clipboard file
+    #[arg(long, env = "FILEC_CLIPBOARD_PATH")]
+    pub(crate) clipboard_path: Option<PathBuf>,
 
     #[command(subcommand)]
     pub(crate) cmd: Command,

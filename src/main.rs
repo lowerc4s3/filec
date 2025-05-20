@@ -1,45 +1,45 @@
 use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result};
-use buffer::Buffer;
+use clipboard::Clipboard;
 use clap::Parser;
 use cli::{Cli, Command};
 use directories::ProjectDirs;
 
-mod buffer;
+mod clipboard;
 mod cli;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let buffer_path =
-        if let Some(user_path) = cli.buffer_path { user_path } else { init_default_buffer_path()? };
-    let mut buffer = Buffer::new(buffer_path);
+    let clipboard_path =
+        if let Some(user_path) = cli.clipboard_path { user_path } else { init_clipboard_path()? };
+    let mut clipboard = Clipboard::new(clipboard_path);
     match &cli.cmd {
-        Command::Add(add_args) => buffer.add_files(&add_args.files)?,
-        Command::Copy(copy_args) => buffer.copy_files(copy_args.dest.as_deref())?,
-        Command::Move(move_args) => buffer.move_files(move_args.dest.as_deref())?,
+        Command::Add(add_args) => clipboard.add_files(&add_args.files)?,
+        Command::Copy(copy_args) => clipboard.copy_files(copy_args.dest.as_deref())?,
+        Command::Move(move_args) => clipboard.move_files(move_args.dest.as_deref())?,
     }
     Ok(())
 }
 
-fn init_default_buffer_path() -> Result<PathBuf> {
-    let buffer_file = get_default_buffer_dir();
-    let buffer_dir = buffer_file.parent().expect("default buffer path must have a parent");
-    match buffer_dir.try_exists() {
+fn init_clipboard_path() -> Result<PathBuf> {
+    let file = default_clipboard_path();
+    let parent = file.parent().expect("default clipboard path must have a parent");
+    match parent.try_exists() {
         Err(e) => {
             return Err(e)
-                .with_context(|| format!("cannot check existence of {}", buffer_dir.display()));
+                .with_context(|| format!("cannot check existence of {}", parent.display()));
         }
         Ok(false) => {
-            fs::create_dir(buffer_dir)
-                .with_context(|| format!("cannot create {}", buffer_dir.display()))?;
+            fs::create_dir(parent)
+                .with_context(|| format!("cannot create {}", parent.display()))?;
         }
         Ok(true) => {}
     }
-    Ok(buffer_file)
+    Ok(file)
 }
 
-fn get_default_buffer_dir() -> PathBuf {
+fn default_clipboard_path() -> PathBuf {
     // If user defined XDG_DATA_HOME on macOS,
     // use it instead of Application Support
     if cfg!(target_os = "macos") {

@@ -5,18 +5,18 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug)]
-pub struct Buffer {
+pub struct Clipboard {
     path: PathBuf,
 }
 
-impl Buffer {
+impl Clipboard {
     pub fn new(path: PathBuf) -> Self {
-        Buffer { path }
+        Clipboard { path }
     }
 
     // FIXME: Handle duplicate paths
     pub fn add_files<T: AsRef<Path>>(&mut self, files: &[T]) -> Result<(), AddFilesError> {
-        let mut buffer_file = BufWriter::new(
+        let mut clipboard_file = BufWriter::new(
             File::options()
                 .create(true)
                 .append(true)
@@ -31,8 +31,8 @@ impl Buffer {
                     source: e,
                 })
             })
-            .try_for_each(|filename| -> Result<(), AddFilesError> {
-                writeln!(buffer_file, "{}", filename?.display())?;
+            .try_for_each(|path| -> Result<(), AddFilesError> {
+                writeln!(clipboard_file, "{}", path?.display())?;
                 Ok(())
             })?;
         Ok(())
@@ -49,11 +49,11 @@ impl Buffer {
 
 #[derive(Debug, Error)]
 pub enum AddFilesError {
-    #[error("cannot open buffer {}", .filename.display())]
+    #[error("cannot open clipboard file {}", .filename.display())]
     Open { filename: PathBuf, source: io::Error },
-    #[error("cannot add file {} to buffer", .filename.display())]
+    #[error("cannot add file {} to clipboard file", .filename.display())]
     Add { filename: PathBuf, source: io::Error },
-    #[error("cannot write to buffer")]
+    #[error("cannot write to clipboard file")]
     Write(#[from] io::Error),
 }
 
