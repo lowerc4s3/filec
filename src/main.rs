@@ -26,7 +26,7 @@ fn init_default_buffer_path() -> Result<PathBuf> {
                 .with_context(|| format!("cannot check existence of {}", buf_dir.display()));
         }
         Ok(false) => {
-            fs::create_dir(&buf_dir).with_context(|| format!("cannot create {}", buf_dir.display()))?;
+            fs::create_dir(buf_dir).with_context(|| format!("cannot create {}", buf_dir.display()))?;
         }
         Ok(true) => {}
     }
@@ -40,11 +40,12 @@ fn get_default_buffer_dir() -> PathBuf {
         if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
             let mut filec_dir = PathBuf::from(data_dir);
             filec_dir.push("filec");
+            filec_dir.push("buf.txt");
             return filec_dir;
         }
     }
     ProjectDirs::from("", "", "filec")
         .expect("cannot get user's home directory")
         .data_dir()
-        .to_path_buf()
+        .with_file_name("buf.txt")
 }
