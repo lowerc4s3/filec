@@ -7,9 +7,12 @@ use clap::{Args, Parser, Subcommand};
 pub(crate) struct Cli {
     /// Enable verbose output
     #[arg(short, long)]
-    pub(crate) verbose: Option<bool>,
+    pub(crate) verbose: bool,
+
+    /// Provide buffer file
     #[arg(long, env = "FILEC_BUFFER_PATH")]
     pub(crate) buffer_path: Option<PathBuf>,
+
     #[command(subcommand)]
     pub(crate) cmd: Command,
 }
