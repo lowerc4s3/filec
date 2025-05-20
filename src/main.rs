@@ -15,10 +15,11 @@ fn main() -> Result<()> {
         if let Some(user_path) = cli.buffer_path { user_path } else { init_default_buffer_path()? };
     let mut buffer = Buffer::new(buffer_path);
     match &cli.cmd {
-        Command::Add(add_args) => buffer.add_files(&add_args.files),
-        Command::Copy(copy_args) => buffer.copy_files(copy_args.dest.as_deref()),
-        Command::Move(move_args) => buffer.move_files(move_args.dest.as_deref()),
+        Command::Add(add_args) => buffer.add_files(&add_args.files)?,
+        Command::Copy(copy_args) => buffer.copy_files(copy_args.dest.as_deref())?,
+        Command::Move(move_args) => buffer.move_files(move_args.dest.as_deref())?,
     }
+    Ok(())
 }
 
 fn init_default_buffer_path() -> Result<PathBuf> {
