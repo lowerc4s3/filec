@@ -21,16 +21,20 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Add files to clipboard
     Add(AddArgs),
+
     /// Copy files from clipboard to directory
+    #[command(visible_alias("cp"))]
     Copy(CopyArgs),
+
     /// Copy files from clipboard to directory
+    #[command(visible_alias("mv"))]
     Move(MoveArgs),
+
     /// List selected files
+    #[command(visible_alias("ls"))]
     List,
     // TODO:
-    // List,
     // Drop,
-    // List,
     // Clear
     // Exec,
 }
