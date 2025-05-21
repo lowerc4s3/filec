@@ -25,11 +25,13 @@ pub(crate) enum Command {
     Copy(CopyArgs),
     /// Copy files from clipboard to directory
     Move(MoveArgs),
+    /// List selected files
+    List,
     // TODO:
     // List,
     // Drop,
     // List,
-    // Help,
+    // Clear
     // Exec,
 }
 

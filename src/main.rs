@@ -1,13 +1,14 @@
-use std::{env, fs, path::PathBuf};
+use std::io::Write;
+use std::{env, fs, io, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clipboard::Clipboard;
 use clap::Parser;
 use cli::{Cli, Command};
+use clipboard::Clipboard;
 use directories::ProjectDirs;
 
-mod clipboard;
 mod cli;
+mod clipboard;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -18,6 +19,13 @@ fn main() -> Result<()> {
         Command::Add(add_args) => clipboard.add_files(&add_args.files)?,
         Command::Copy(copy_args) => clipboard.copy_files(copy_args.dest.as_deref())?,
         Command::Move(move_args) => clipboard.move_files(move_args.dest.as_deref())?,
+        Command::List => {
+            // TODO: Improve formatting
+            let mut lock = io::stdout().lock();
+            for filename in clipboard.get_selected()? {
+                writeln!(lock, "{}", filename.display())?;
+            }
+        }
     }
     Ok(())
 }

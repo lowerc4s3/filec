@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -62,6 +62,10 @@ impl Clipboard {
     pub fn move_files(&mut self, dest: Option<&Path>) -> Result<(), MoveFilesError> {
         todo!();
     }
+
+    pub fn get_selected(&self) -> Result<Vec<PathBuf>, GetSelectedError> {
+        Ok(fs::read_to_string(&self.path)?.lines().map(PathBuf::from).collect())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -84,3 +88,7 @@ pub enum CopyFilesError {}
 
 #[derive(Debug, Error)]
 pub enum MoveFilesError {}
+
+#[derive(Debug, Error)]
+#[error("cannot read clipboard contents")]
+pub struct GetSelectedError(#[from] io::Error);
