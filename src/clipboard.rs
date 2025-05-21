@@ -66,6 +66,11 @@ impl Clipboard {
     pub fn get_selected(&self) -> Result<Vec<PathBuf>, GetSelectedError> {
         Ok(fs::read_to_string(&self.path)?.lines().map(PathBuf::from).collect())
     }
+
+    pub fn clear(&mut self) -> Result<(), ClearError> {
+        File::options().write(true).truncate(true).open(&self.path)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -92,3 +97,7 @@ pub enum MoveFilesError {}
 #[derive(Debug, Error)]
 #[error("cannot read clipboard contents")]
 pub struct GetSelectedError(#[from] io::Error);
+
+#[derive(Debug, Error)]
+#[error("cannot clear clipboard")]
+pub struct ClearError(#[from] io::Error);

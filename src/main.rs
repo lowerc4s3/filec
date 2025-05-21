@@ -26,6 +26,7 @@ fn main() -> Result<()> {
                 writeln!(lock, "{}", filename.display())?;
             }
         }
+        Command::Clear => clipboard.clear()?,
     }
     Ok(())
 }

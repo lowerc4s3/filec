@@ -33,9 +33,11 @@ pub(crate) enum Command {
     /// List selected files
     #[command(visible_alias("ls"))]
     List,
+
+    /// Clear clipboard
+    Clear,
     // TODO:
     // Drop,
-    // Clear
     // Exec,
 }
 
