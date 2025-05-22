@@ -1,7 +1,7 @@
-use std::io::Write;
-use std::{env, fs, io, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 
 use anyhow::{Context, Result};
+use app::App;
 use clap::Parser;
 use cli::{Cli, Command};
 use clipboard::Clipboard;
@@ -9,26 +9,14 @@ use directories::ProjectDirs;
 
 mod cli;
 mod clipboard;
+mod app;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let clipboard_path =
         if let Some(user_path) = cli.clipboard_path { user_path } else { init_clipboard_path()? };
-    let mut clipboard = Clipboard::new(clipboard_path);
-    match &cli.cmd {
-        Command::Add(add_args) => clipboard.add(&add_args.files)?,
-        Command::Copy(copy_args) => clipboard.copy_to(copy_args.dest.as_deref())?,
-        Command::Move(move_args) => clipboard.move_to(move_args.dest.as_deref())?,
-        Command::List => {
-            // TODO: Improve formatting
-            let mut lock = io::stdout().lock();
-            for filename in clipboard.contents()? {
-                writeln!(lock, "{}", filename.display())?;
-            }
-        }
-        Command::Clear => clipboard.clear()?,
-    }
-    Ok(())
+    let mut app = App::new(Clipboard::new(clipboard_path), cli.cmd);
+    app.run()
 }
 
 fn init_clipboard_path() -> Result<PathBuf> {
