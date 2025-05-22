@@ -25,6 +25,7 @@ impl Clipboard {
             .map_err(FileError::Access)?;
         utils::lock_file(&mut clip_file)?;
 
+        // Read current contents of clipboard to exclude already added paths
         let mut buf = String::new();
         clip_file.read_to_string(&mut buf).map_err(FileError::Access)?;
         let contents: HashSet<_> = buf.lines().map(PathBuf::from).collect();
@@ -37,8 +38,9 @@ impl Clipboard {
                     .canonicalize()
                     .map_err(|e| AddError::AbsPath { filename: filename.to_path_buf(), source: e })
             })
-            .collect::<Result<HashSet<_>, _>>()?;
+            .collect::<Result<HashSet<_>, _>>()?; // Collect into set to remove duplicates
 
+        // Exclude path from clipboard and return error if no files left
         files = &files - &contents;
         if files.is_empty() {
             return Err(AddError::NoNewFiles);
