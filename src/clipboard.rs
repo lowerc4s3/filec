@@ -27,9 +27,9 @@ impl Clipboard {
 
         let mut buf = String::new();
         clip_file.read_to_string(&mut buf).map_err(FileError::Access)?;
-        let contents: HashSet<_> = buf.lines().map(Path::new).collect();
+        let contents: HashSet<_> = buf.lines().map(PathBuf::from).collect();
 
-        let files = files
+        let mut files = files
             .iter()
             .map(AsRef::as_ref)
             .map(|filename| {
@@ -39,13 +39,15 @@ impl Clipboard {
             })
             .collect::<Result<HashSet<_>, _>>()?;
 
-        // TODO: Return error if there're no new files to add
+        files = &files - &contents;
+        if files.is_empty() {
+            return Err(AddError::NoNewFiles);
+        }
+
         let mut clip_writer = BufWriter::new(clip_file);
-        files.iter().filter(|filename| !contents.contains(filename.as_path())).try_for_each(
-            |path| -> Result<(), _> {
-                writeln!(clip_writer, "{}", path.display()).map_err(FileError::Access)
-            },
-        )?;
+        for path in files {
+            writeln!(clip_writer, "{}", path.display()).map_err(FileError::Access)?
+        }
         Ok(())
     }
 
@@ -111,6 +113,9 @@ pub enum AddError {
 
     #[error(transparent)]
     Lock(#[from] utils::LockError),
+
+    #[error("no new files to add")]
+    NoNewFiles,
 }
 
 #[derive(Debug, Error)]
