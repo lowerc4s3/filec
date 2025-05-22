@@ -46,6 +46,8 @@ impl Clipboard {
             return Err(AddError::NoNewFiles);
         }
 
+        // File's cursor was moved to the end when we were reading file,
+        // no need to modify it
         let mut clip_writer = BufWriter::new(clip_file);
         for path in files {
             writeln!(clip_writer, "{}", path.display()).map_err(FileError::Access)?
@@ -61,6 +63,8 @@ impl Clipboard {
         // TODO: Handle symlinks
         let dest = dest.unwrap_or(Path::new(".")).canonicalize().map_err(|_| DestDirError)?;
         let selected = self.contents()?;
+
+        // Save failed paths so we can leave them in clipboard
         let mut failed: Vec<PathBuf> = Vec::with_capacity(selected.len());
 
         for filename in selected {
@@ -71,8 +75,10 @@ impl Clipboard {
         }
 
         if failed.is_empty() {
+            // Clear file if operation succeeded...
             self.clear()?;
         } else {
+            // ...or leave failed in clipboard
             self.add_overwrite(&failed)?;
         }
         Ok(())
