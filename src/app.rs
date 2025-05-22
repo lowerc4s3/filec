@@ -17,16 +17,16 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         match &self.cmd {
             Command::Add(add_args) => {
-                self.clipboard.add(&add_args.files).context("Failed to add files")
+                self.clipboard.add(&add_args.files).context("failed to add files")
             }
             Command::Copy(copy_args) => {
-                self.clipboard.copy_to(copy_args.dest.as_deref()).context("Failed to copy files")
+                self.clipboard.copy_to(copy_args.dest.as_deref()).context("failed to copy files")
             }
             Command::Move(move_args) => {
-                self.clipboard.move_to(move_args.dest.as_deref()).context("Failed to move files")
+                self.clipboard.move_to(move_args.dest.as_deref()).context("failed to move files")
             }
-            Command::List => self.list().context("Failed to list contents"),
-            Command::Clear => self.clipboard.clear().context("Failed to clear clipboard"),
+            Command::List => self.list().context("failed to list contents"),
+            Command::Clear => self.clipboard.clear().context("failed to clear clipboard"),
         }
     }
 

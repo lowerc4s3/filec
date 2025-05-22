@@ -7,20 +7,19 @@ use cli::{Cli, Command};
 use clipboard::Clipboard;
 use directories::ProjectDirs;
 
+mod app;
 mod cli;
 mod clipboard;
-mod app;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let clipboard_path =
-        if let Some(user_path) = cli.clipboard_path { user_path } else { init_clipboard_path()? };
-    let mut app = App::new(Clipboard::new(clipboard_path), cli.cmd);
+    let clip_path = cli.clipboard_path.ok_or(()).or_else(|_| init_default())?;
+    let mut app = App::new(Clipboard::new(clip_path), cli.cmd);
     app.run()
 }
 
-fn init_clipboard_path() -> Result<PathBuf> {
-    let file = default_clipboard_path();
+fn init_default() -> Result<PathBuf> {
+    let file = default_path()?;
     let parent = file.parent().expect("default clipboard path must have a parent");
     match parent.try_exists() {
         Err(e) => {
@@ -36,19 +35,19 @@ fn init_clipboard_path() -> Result<PathBuf> {
     Ok(file)
 }
 
-fn default_clipboard_path() -> PathBuf {
+fn default_path() -> Result<PathBuf> {
     // If user defined XDG_DATA_HOME on macOS,
     // use it instead of Application Support
     if cfg!(target_os = "macos") {
         if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
-            let mut filec_dir = PathBuf::from(data_dir);
-            filec_dir.push("filec");
-            filec_dir.push("buf.txt");
-            return filec_dir;
+            let mut default_dir = PathBuf::from(data_dir);
+            default_dir.push("filec");
+            default_dir.push("buf.txt");
+            return Ok(default_dir);
         }
     }
-    ProjectDirs::from("", "", "filec")
-        .expect("cannot get user's home directory")
+    Ok(ProjectDirs::from("", "", "filec")
+        .context("cannot get user's home directory")?
         .data_dir()
-        .with_file_name("buf.txt")
+        .with_file_name("buf.txt"))
 }
