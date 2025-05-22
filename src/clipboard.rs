@@ -15,7 +15,7 @@ impl Clipboard {
         Clipboard { path }
     }
 
-    pub fn add<T: AsRef<Path>>(&mut self, files: &[T]) -> Result<(), AddError> {
+    pub fn add(&mut self, files: &[impl AsRef<Path>]) -> Result<(), AddError> {
         let mut clip_file = File::options()
             .write(true)
             .read(true)
@@ -55,19 +55,19 @@ impl Clipboard {
         Ok(())
     }
 
-    pub fn copy_to(&mut self, dest: Option<&Path>) -> Result<(), CopyError> {
+    pub fn copy_to(&mut self, dest: impl AsRef<Path>) -> Result<(), CopyError> {
         todo!();
     }
 
-    pub fn move_to(&mut self, dest: Option<&Path>) -> Result<(), MoveError> {
+    pub fn move_to(&mut self, dest: impl AsRef<Path>) -> Result<(), MoveError> {
         // TODO: Handle symlinks
-        let dest = dest.unwrap_or(Path::new(".")).canonicalize().map_err(|_| DestDirError)?;
-        let selected = self.contents()?;
+        let dest = dest.as_ref().canonicalize().map_err(|_| DestDirError)?;
+        let contents = self.contents()?;
 
         // Save failed paths so we can leave them in clipboard
-        let mut failed: Vec<PathBuf> = Vec::with_capacity(selected.len());
+        let mut failed: Vec<PathBuf> = Vec::with_capacity(contents.len());
 
-        for filename in selected {
+        for filename in contents {
             if let Err(e) = utils::move_file(&filename, &dest) {
                 eprintln!("Failed to move {}: {e}", filename.display());
                 failed.push(filename);
@@ -99,7 +99,7 @@ impl Clipboard {
         Ok(())
     }
 
-    fn add_overwrite<T: AsRef<Path>>(&mut self, files_abs: &[T]) -> Result<(), FileError> {
+    fn add_overwrite(&mut self, files_abs: &[impl AsRef<Path>]) -> Result<(), FileError> {
         let mut clip_file = File::options().write(true).open(&self.path)?;
         utils::lock_file(&mut clip_file)?;
         clip_file.set_len(0)?;
@@ -137,8 +137,8 @@ pub enum MoveError {
     #[error(transparent)]
     Read(#[from] FileError),
 
-    #[error("cannot get basename of file {}", .0.display())]
-    Basename(PathBuf),
+    #[error(transparent)]
+    DestPath(#[from] utils::ChangePrefixError),
 
     #[error("cannot move {} to {}", .from.display(), .to.display())]
     Move { from: PathBuf, to: PathBuf, source: io::Error },
@@ -161,11 +161,10 @@ mod utils {
     use super::*;
     use fs4::fs_std::FileExt;
 
-    pub(super) fn move_file(filename: &Path, dest: &Path) -> Result<(), MoveError> {
-        let new_filename = dest
-            .join(filename.file_name().ok_or_else(|| MoveError::Basename(filename.to_path_buf()))?);
-        fs::rename(filename, &new_filename).map_err(|e| MoveError::Move {
-            from: filename.to_path_buf(),
+    pub(super) fn move_file(filename: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<(), MoveError> {
+        let new_filename = change_prefix(&filename, &dest)?;
+        fs::rename(&filename, &new_filename).map_err(|e| MoveError::Move {
+            from: filename.as_ref().to_path_buf(),
             to: new_filename,
             source: e,
         })?;
@@ -179,6 +178,18 @@ mod utils {
             _ => Ok(()),
         }
     }
+
+    fn change_prefix(filename: impl AsRef<Path>, prefix: impl AsRef<Path>) -> Result<PathBuf, ChangePrefixError> {
+        let basename = filename
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| ChangePrefixError(filename.as_ref().to_path_buf()))?;
+        Ok(prefix.as_ref().join(basename))
+    }
+
+    #[derive(Debug, Error)]
+    #[error("cannot get {} destination path", .0.display())]
+    pub struct ChangePrefixError(PathBuf);
 
     #[derive(Debug, Error)]
     #[error("other process uses clipboard file")]

@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::{io::{self, Write}, path::Path};
 
 use anyhow::{Context, Result};
 
@@ -20,10 +20,12 @@ impl App {
                 self.clipboard.add(&add_args.files).context("failed to add files")
             }
             Command::Copy(copy_args) => {
-                self.clipboard.copy_to(copy_args.dest.as_deref()).context("failed to copy files")
+                let dest = copy_args.dest.as_deref().unwrap_or(Path::new("."));
+                self.clipboard.copy_to(dest).context("failed to copy files")
             }
             Command::Move(move_args) => {
-                self.clipboard.move_to(move_args.dest.as_deref()).context("failed to move files")
+                let dest = move_args.dest.as_deref().unwrap_or(Path::new("."));
+                self.clipboard.move_to(dest).context("failed to move files")
             }
             Command::List => self.list().context("failed to list contents"),
             Command::Clear => self.clipboard.clear().context("failed to clear clipboard"),
