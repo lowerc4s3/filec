@@ -1,3 +1,4 @@
+use fs4::fs_std::FileExt;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
@@ -15,185 +16,172 @@ impl Clipboard {
         Clipboard { path }
     }
 
-    pub fn add(&mut self, files: &[impl AsRef<Path>]) -> Result<(), AddError> {
-        let mut clip_file = File::options()
-            .write(true)
-            .read(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.path)
-            .map_err(FileError::Access)?;
-        utils::lock_file(&mut clip_file)?;
+    pub fn add(&mut self, files: &[impl AsRef<Path>]) -> Result<(), ClipboardError> {
+        let mut clip_file = ClipboardFile::from_options(
+            File::options().write(true).read(true).create(true).truncate(false),
+            &self.path,
+        )?;
+        clip_file.try_lock()?;
 
-        // Read current contents of clipboard to exclude already added paths
-        let mut buf = String::new();
-        clip_file.read_to_string(&mut buf).map_err(FileError::Access)?;
-        let contents: HashSet<_> = buf.lines().map(PathBuf::from).collect();
+        let mut failed = false;
 
-        let mut files = files
+        // Collect into set to remove duplicates
+        let mut paths: HashSet<_> = files
             .iter()
             .map(AsRef::as_ref)
-            .map(|filename| {
-                filename
-                    .canonicalize()
-                    .map_err(|e| AddError::AbsPath { filename: filename.to_path_buf(), source: e })
-            })
-            .collect::<Result<HashSet<_>, _>>()?; // Collect into set to remove duplicates
+            .map(|name| name.canonicalize().inspect_err(|e| eprintln!("{}: {e}", name.display())))
+            .inspect(|res| failed |= res.is_err())
+            .filter_map(Result::ok)
+            .collect();
+        paths.is_empty().then_some(()).ok_or(ClipboardError::NoNewFiles)?;
+
+        // Read current contents of clipboard to exclude already added paths
+        let contents: HashSet<_> = clip_file.read_all()?.into_iter().collect();
 
         // Exclude path from clipboard and return error if no files left
-        files = &files - &contents;
-        if files.is_empty() {
-            return Err(AddError::NoNewFiles);
-        }
+        paths = &paths - &contents;
+        paths.is_empty().then_some(()).ok_or(ClipboardError::NoNewFiles)?;
 
         // File's cursor was moved to the end when we were reading file,
         // no need to modify it
-        let mut clip_writer = BufWriter::new(clip_file);
-        for path in files {
-            writeln!(clip_writer, "{}", path.display()).map_err(FileError::Access)?
-        }
-        Ok(())
+        clip_file.append(paths.into_iter())?;
+
+        // Return error if some files were processed with errors
+        failed.then_some(()).ok_or(ClipboardError::PartitialFail)
     }
 
-    pub fn copy_to(&mut self, dest: impl AsRef<Path>) -> Result<(), CopyError> {
+    pub fn copy_to(&mut self, dest: impl AsRef<Path>) -> Result<(), ClipboardError> {
         todo!();
     }
 
-    pub fn move_to(&mut self, dest: impl AsRef<Path>) -> Result<(), MoveError> {
+    pub fn move_to(&mut self, dest: impl AsRef<Path>) -> Result<(), ClipboardError> {
         // TODO: Handle symlinks
-        let dest = dest.as_ref().canonicalize().map_err(|_| DestDirError)?;
-        let contents = self.contents()?;
+        let dest = dest.as_ref().canonicalize().map_err(ClipboardError::DestDir)?;
+
+        let mut clip_file = ClipboardFile::open(&self.path)?;
+        clip_file.try_lock()?;
+        let contents = clip_file.read_all()?;
 
         // Save failed paths so we can leave them in clipboard
-        let mut failed: Vec<PathBuf> = Vec::with_capacity(contents.len());
+        let failed: Vec<MoveError> = contents
+            .into_iter()
+            .filter_map(|name| move_file(&name, &dest).err())
+            .inspect(|e| eprintln!("{e}"))
+            .collect();
 
-        for filename in contents {
-            if let Err(e) = utils::move_file(&filename, &dest) {
-                eprintln!("Failed to move {}: {e}", filename.display());
-                failed.push(filename);
-            }
-        }
-
+        clip_file.clear()?;
         if failed.is_empty() {
-            // Clear file if operation succeeded...
-            self.clear()?;
+            Ok(())
         } else {
-            // ...or leave failed in clipboard
-            self.add_overwrite(&failed)?;
+            // Leave failed files in clipboard
+            clip_file.append(failed.into_iter().map(|e| e.file))?;
+            Err(ClipboardError::PartitialFail)
         }
-        Ok(())
     }
 
-    pub fn contents(&self) -> Result<Vec<PathBuf>, FileError> {
-        let mut file = File::open(&self.path)?;
-        utils::lock_file(&mut file)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        Ok(contents.lines().map(PathBuf::from).collect())
+    pub fn contents(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        let mut clip_file = ClipboardFile::open(&self.path)?;
+        clip_file.try_lock()?;
+        Ok(clip_file.read_all()?)
     }
 
-    pub fn clear(&mut self) -> Result<(), FileError> {
-        let mut clip_file = File::options().write(true).open(&self.path)?;
-        utils::lock_file(&mut clip_file)?;
-        clip_file.set_len(0)?;
-        Ok(())
-    }
-
-    fn add_overwrite(&mut self, files_abs: &[impl AsRef<Path>]) -> Result<(), FileError> {
-        let mut clip_file = File::options().write(true).open(&self.path)?;
-        utils::lock_file(&mut clip_file)?;
-        clip_file.set_len(0)?;
-        let mut clip_writer = BufWriter::new(clip_file);
-        for filepath in files_abs {
-            writeln!(clip_writer, "{}", filepath.as_ref().display())?;
-        }
+    pub fn clear(&mut self) -> Result<(), ClipboardError> {
+        let mut clip_file = ClipboardFile::from_options(File::options().write(true), &self.path)?;
+        clip_file.try_lock()?;
+        clip_file.clear()?;
         Ok(())
     }
 }
 
 #[derive(Debug, Error)]
-pub enum AddError {
-    #[error("cannot process clipboard file")]
-    File(#[from] FileError),
-
-    #[error("cannot get absolute path of {}", .filename.display())]
-    AbsPath { filename: PathBuf, source: io::Error },
-
-    #[error(transparent)]
-    Lock(#[from] utils::LockError),
-
-    #[error("no new files to add")]
-    NoNewFiles,
-}
-
-#[derive(Debug, Error)]
-pub enum CopyError {}
-
-#[derive(Debug, Error)]
-pub enum MoveError {
-    #[error(transparent)]
-    DestinationDir(#[from] DestDirError),
-
-    #[error(transparent)]
-    Read(#[from] FileError),
-
-    #[error(transparent)]
-    DestPath(#[from] utils::ChangePrefixError),
-
-    #[error("cannot move {} to {}", .from.display(), .to.display())]
-    Move { from: PathBuf, to: PathBuf, source: io::Error },
-}
-
-#[derive(Debug, Error)]
-pub enum FileError {
+pub enum ClipboardError {
     #[error("cannot access clipboard file")]
-    Access(#[from] io::Error),
+    ClipboardFile(#[from] ClipboardFileError),
 
-    #[error(transparent)]
-    Lock(#[from] utils::LockError),
+    #[error("there's no new files to add")]
+    NoNewFiles,
+
+    #[error("cannot access destination dir")]
+    DestDir(#[source] io::Error),
+
+    #[error("one or more files were processed with errors")]
+    PartitialFail,
 }
 
-#[derive(Debug, Error)]
-#[error("cannot resolve destination dir")]
-pub struct DestDirError;
+#[derive(Debug)]
+struct ClipboardFile(File);
 
-mod utils {
-    use super::*;
-    use fs4::fs_std::FileExt;
+impl ClipboardFile {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ClipboardFileError> {
+        Ok(ClipboardFile(File::open(path)?))
+    }
 
-    pub(super) fn move_file(filename: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<(), MoveError> {
-        let new_filename = change_prefix(&filename, &dest)?;
-        fs::rename(&filename, &new_filename).map_err(|e| MoveError::Move {
-            from: filename.as_ref().to_path_buf(),
-            to: new_filename,
-            source: e,
-        })?;
+    #[allow(dead_code)]
+    pub fn create(path: impl AsRef<Path>) -> Result<Self, ClipboardFileError> {
+        Ok(ClipboardFile(File::create(path)?))
+    }
+
+    pub fn from_options(
+        opts: &fs::OpenOptions,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, ClipboardFileError> {
+        Ok(ClipboardFile(opts.open(path)?))
+    }
+
+    pub fn clear(&mut self) -> Result<(), ClipboardFileError> {
+        self.0.set_len(0)?;
         Ok(())
     }
 
-    pub(super) fn lock_file(file: &mut File) -> Result<(), LockError> {
-        match file.try_lock_exclusive() {
-            Err(e) => Err(LockError { source: Some(e) }),
-            Ok(false) => Err(LockError { source: None }),
+    pub fn try_lock(&self) -> Result<(), ClipboardFileError> {
+        match self.0.try_lock_exclusive() {
+            Err(e) => Err(ClipboardFileError::Lock(Some(e))),
+            Ok(false) => Err(ClipboardFileError::Lock(None)),
             _ => Ok(()),
         }
     }
 
-    fn change_prefix(filename: impl AsRef<Path>, prefix: impl AsRef<Path>) -> Result<PathBuf, ChangePrefixError> {
-        let basename = filename
-            .as_ref()
+    pub fn read_all(&mut self) -> Result<Vec<PathBuf>, ClipboardFileError> {
+        let mut contents = String::new();
+        self.0.read_to_string(&mut contents)?;
+        Ok(contents.lines().map(PathBuf::from).collect())
+    }
+
+    pub fn append(
+        &mut self,
+        filenames: impl Iterator<Item = impl AsRef<Path>>,
+    ) -> Result<(), ClipboardFileError> {
+        let mut writer = BufWriter::new(&self.0);
+        for name in filenames {
+            writeln!(writer, "{}", name.as_ref().display()).map_err(ClipboardFileError::Access)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ClipboardFileError {
+    #[error("other process acquired lock on clipboard file")]
+    Lock(#[source] Option<io::Error>),
+
+    #[error("cannot access clipboard file")]
+    Access(#[from] io::Error),
+}
+
+fn move_file(name: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<(), MoveError> {
+    let new_name = dest.as_ref().join(
+        name.as_ref()
             .file_name()
-            .ok_or_else(|| ChangePrefixError(filename.as_ref().to_path_buf()))?;
-        Ok(prefix.as_ref().join(basename))
-    }
+            .ok_or_else(|| MoveError { file: name.as_ref().to_path_buf(), source: None })?,
+    );
+    fs::rename(&name, &new_name)
+        .map_err(|e| MoveError { file: name.as_ref().to_path_buf(), source: Some(e) })?;
+    Ok(())
+}
 
-    #[derive(Debug, Error)]
-    #[error("cannot get {} destination path", .0.display())]
-    pub struct ChangePrefixError(PathBuf);
-
-    #[derive(Debug, Error)]
-    #[error("other process uses clipboard file")]
-    pub struct LockError {
-        source: Option<io::Error>,
-    }
+#[derive(Debug, Error)]
+#[error("{}: {}", .file.display(), .source.as_ref().unwrap_or(&io::Error::other("Invalid path")))] // NOTE: ???
+pub struct MoveError {
+    file: PathBuf,
+    source: Option<io::Error>,
 }

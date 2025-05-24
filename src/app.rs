@@ -1,4 +1,7 @@
-use std::{io::{self, Write}, path::Path};
+use std::{
+    io::{self, Write},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 

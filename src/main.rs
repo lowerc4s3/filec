@@ -13,7 +13,7 @@ mod clipboard;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let clip_path = cli.clipboard_path.ok_or(()).or_else(|_| init_default())?;
+    let clip_path = cli.clipboard_path.ok_or(()).or_else(|()| init_default())?;
     let mut app = App::new(Clipboard::new(clip_path), cli.cmd);
     app.run()
 }
