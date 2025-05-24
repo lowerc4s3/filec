@@ -1,7 +1,7 @@
 use fs4::fs_std::FileExt;
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -16,6 +16,7 @@ impl Clipboard {
         Clipboard { path }
     }
 
+    // TODO: Accept iterator instead of slice
     pub fn add(&mut self, files: &[impl AsRef<Path>]) -> Result<(), ClipboardError> {
         let mut clip_file = ClipboardFile::from_options(
             File::options().write(true).read(true).create(true).truncate(false),
@@ -23,49 +24,48 @@ impl Clipboard {
         )?;
         clip_file.try_lock()?;
 
-        let mut failed = false;
-
         // Collect into set to remove duplicates
         let mut paths: HashSet<_> = files
             .iter()
             .map(AsRef::as_ref)
             .map(|name| name.canonicalize().inspect_err(|e| eprintln!("{}: {e}", name.display())))
-            .inspect(|res| failed |= res.is_err())
             .filter_map(Result::ok)
             .collect();
-        paths.is_empty().then_some(()).ok_or(ClipboardError::NoNewFiles)?;
+
+        if paths.is_empty() {
+            return Err(ClipboardError::NoNewFiles);
+        }
 
         // Read current contents of clipboard to exclude already added paths
         let contents: HashSet<_> = clip_file.read_all()?.into_iter().collect();
 
         // Exclude path from clipboard and return error if no files left
         paths = &paths - &contents;
-        paths.is_empty().then_some(()).ok_or(ClipboardError::NoNewFiles)?;
+        if paths.is_empty() {
+            return Err(ClipboardError::NoNewFiles);
+        }
 
         // File's cursor was moved to the end when we were reading file,
         // no need to modify it
         clip_file.append(paths.into_iter())?;
-
-        // Return error if some files were processed with errors
-        failed.then_some(()).ok_or(ClipboardError::PartitialFail)
+        Ok(())
     }
 
-    pub fn copy_to(&mut self, dest: impl AsRef<Path>) -> Result<(), ClipboardError> {
-        todo!();
-    }
+    // TODO: Separate exec logic
+    pub fn copy_to(&mut self, dest: &Path) -> Result<(), ClipboardError> {
+        let dest = dest.canonicalize().map_err(ClipboardError::DestDir)?;
 
-    pub fn move_to(&mut self, dest: impl AsRef<Path>) -> Result<(), ClipboardError> {
-        // TODO: Handle symlinks
-        let dest = dest.as_ref().canonicalize().map_err(ClipboardError::DestDir)?;
-
-        let mut clip_file = ClipboardFile::open(&self.path)?;
+        let mut clip_file =
+            ClipboardFile::from_options(File::options().read(true).write(true), &self.path)?;
         clip_file.try_lock()?;
         let contents = clip_file.read_all()?;
 
-        // Save failed paths so we can leave them in clipboard
-        let failed: Vec<MoveError> = contents
+        // Function copy returns errors for nested files
+        // so we populate clipboard only with failed files
+        let failed: Vec<ExecError> = contents
             .into_iter()
-            .filter_map(|name| move_file(&name, &dest).err())
+            .filter_map(|name| copy(&name, &dest).err())
+            .flatten()
             .inspect(|e| eprintln!("{e}"))
             .collect();
 
@@ -75,6 +75,32 @@ impl Clipboard {
         } else {
             // Leave failed files in clipboard
             clip_file.append(failed.into_iter().map(|e| e.file))?;
+            Err(ClipboardError::PartitialFail)
+        }
+    }
+
+    // TODO: Handle symlinks
+    pub fn move_to(&mut self, dest: &Path) -> Result<(), ClipboardError> {
+        let dest = dest.canonicalize().map_err(ClipboardError::DestDir)?;
+
+        let mut clip_file =
+            ClipboardFile::from_options(File::options().read(true).write(true), &self.path)?;
+        clip_file.try_lock()?;
+        let contents = clip_file.read_all()?;
+
+        // Save failed paths so we can leave them in clipboard
+        let errors: Vec<ExecError> = contents
+            .into_iter()
+            .filter_map(|name| rename(&name, &dest).err())
+            .inspect(|e| eprintln!("{e}"))
+            .collect();
+
+        clip_file.clear()?;
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            // Leave failed files in clipboard
+            clip_file.append(errors.into_iter().map(|e| e.file))?;
             Err(ClipboardError::PartitialFail)
         }
     }
@@ -112,24 +138,22 @@ pub enum ClipboardError {
 struct ClipboardFile(File);
 
 impl ClipboardFile {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ClipboardFileError> {
+    pub fn open(path: &Path) -> Result<Self, ClipboardFileError> {
         Ok(ClipboardFile(File::open(path)?))
     }
 
     #[allow(dead_code)]
-    pub fn create(path: impl AsRef<Path>) -> Result<Self, ClipboardFileError> {
+    pub fn create(path: &Path) -> Result<Self, ClipboardFileError> {
         Ok(ClipboardFile(File::create(path)?))
     }
 
-    pub fn from_options(
-        opts: &fs::OpenOptions,
-        path: impl AsRef<Path>,
-    ) -> Result<Self, ClipboardFileError> {
+    pub fn from_options(opts: &fs::OpenOptions, path: &Path) -> Result<Self, ClipboardFileError> {
         Ok(ClipboardFile(opts.open(path)?))
     }
 
     pub fn clear(&mut self) -> Result<(), ClipboardFileError> {
         self.0.set_len(0)?;
+        self.0.seek(SeekFrom::Start(0))?;
         Ok(())
     }
 
@@ -168,20 +192,57 @@ pub enum ClipboardFileError {
     Access(#[from] io::Error),
 }
 
-fn move_file(name: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<(), MoveError> {
-    let new_name = dest.as_ref().join(
-        name.as_ref()
-            .file_name()
-            .ok_or_else(|| MoveError { file: name.as_ref().to_path_buf(), source: None })?,
+fn rename(name: &Path, dest: &Path) -> Result<(), ExecError> {
+    || -> Result<(), ExecErrorKind> {
+        let new_name = dest.join(name.file_name().ok_or(ExecErrorKind::InvalidPath)?);
+        fs::rename(name, new_name)?;
+        Ok(())
+    }()
+    .map_err(|e| ExecError { file: name.to_path_buf(), kind: e })
+}
+
+// TODO: Mb refactor?
+fn copy(name: &Path, dest: &Path) -> Result<(), Vec<ExecError>> {
+    let new_name = dest.join(
+        name.file_name()
+            .ok_or_else(|| vec![ExecError::new(name.into(), ExecErrorKind::InvalidPath)])?,
     );
-    fs::rename(&name, &new_name)
-        .map_err(|e| MoveError { file: name.as_ref().to_path_buf(), source: Some(e) })?;
-    Ok(())
+    let metadata = name.metadata().map_err(|e| vec![ExecError::new(name.into(), e.into())])?;
+
+    if metadata.is_dir() {
+        fs::create_dir_all(&new_name).map_err(|e| vec![ExecError::new(dest.into(), e.into())])?;
+        let errors: Vec<_> = name
+            .read_dir()
+            .map_err(|e| vec![ExecError::new(name.into(), e.into())])?
+            .filter_map(|res| res.inspect_err(|e| eprintln!("{e}")).ok())
+            .filter_map(|entry| copy(&entry.path(), &new_name).err())
+            .flatten()
+            .collect();
+        if !errors.is_empty() { Err(errors) } else { Ok(()) }
+    } else {
+        fs::copy(name, new_name).map_err(|e| vec![ExecError::new(name.into(), e.into())])?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
-#[error("{}: {}", .file.display(), .source.as_ref().unwrap_or(&io::Error::other("Invalid path")))] // NOTE: ???
-pub struct MoveError {
+#[error("{}, {kind}", .file.display())]
+pub struct ExecError {
     file: PathBuf,
-    source: Option<io::Error>,
+    kind: ExecErrorKind,
+}
+
+impl ExecError {
+    pub fn new(file: PathBuf, kind: ExecErrorKind) -> Self {
+        ExecError { file, kind }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ExecErrorKind {
+    #[error("invalid path")]
+    InvalidPath,
+
+    #[error(transparent)]
+    IO(#[from] io::Error),
 }
